@@ -1,0 +1,131 @@
+{
+  "businessHours": {
+    "1": { "open": false, "comment": "Montag geschlossen" },
+    "2": { "open": true, "start": "09:00", "end": "18:00", "comment": "Dienstag" },
+    "3": { "open": true, "start": "09:00", "end": "18:00", "comment": "Mittwoch" },
+    "4": { "open": true, "start": "09:00", "end": "18:00", "comment": "Donnerstag" },
+    "5": { "open": true, "start": "09:00", "end": "18:00", "comment": "Freitag" },
+    "6": { "open": true, "start": "09:00", "end": "16:00", "comment": "Samstag" },
+    "0": { "open": false, "comment": "Sonntag geschlossen" }
+  },
+  "appointmentDuration": 30,
+  "breakTime": 15,
+  "services": [
+    {
+      "id": "woman-haircut",
+      "category": "Woman",
+      "name": "Haarschnitt",
+      "description": "Waschen, Schneiden, Föhnen",
+      "price": 36.00,
+      "duration": 60
+    },
+    {
+      "id": "woman-coloring",
+      "category": "Woman",
+      "name": "Coloration",
+      "description": "Inklusive Waschen, Pflege und Föhnen",
+      "price": 59.00,
+      "duration": 120
+    },
+    {
+      "id": "woman-highlights",
+      "category": "Woman",
+      "name": "Highlights/Strähnen",
+      "description": "Inklusive Waschen, Pflege und Föhnen",
+      "price": 69.00,
+      "duration": 120
+    },
+    {
+      "id": "woman-blowdry",
+      "category": "Woman",
+      "name": "Föhnen",
+      "description": "Inklusive Waschen",
+      "price": 25.00,
+      "duration": 45
+    },
+    {
+      "id": "woman-updo",
+      "category": "Woman",
+      "name": "Hochsteckfrisur",
+      "description": "Festliche Frisur für besondere Anlässe",
+      "price": 65.00,
+      "duration": 90
+    },
+    {
+      "id": "man-haircut",
+      "category": "Gentleman",
+      "name": "Haarschnitt",
+      "description": "Waschen, Schneiden, Föhnen",
+      "price": 25.00,
+      "duration": 45
+    },
+    {
+      "id": "man-beard",
+      "category": "Gentleman",
+      "name": "Bartpflege",
+      "description": "Bartschnitt und Pflege",
+      "price": 15.00,
+      "duration": 30
+    },
+    {
+      "id": "man-coloring",
+      "category": "Gentleman",
+      "name": "Coloration",
+      "description": "Inklusive Waschen und Styling",
+      "price": 42.00,
+      "duration": 60
+    },
+    {
+      "id": "kids-haircut-small",
+      "category": "Kinder",
+      "name": "Haarschnitt (bis 6 Jahre)",
+      "description": "Waschen, Schneiden, Föhnen",
+      "price": 17.00,
+      "duration": 30
+    },
+    {
+      "id": "kids-haircut-big",
+      "category": "Kinder",
+      "name": "Haarschnitt (7-12 Jahre)",
+      "description": "Waschen, Schneiden, Föhnen",
+      "price": 22.00,
+      "duration": 45
+    },
+    {
+      "id": "cosmetic-eyebrows",
+      "category": "Kosmetik",
+      "name": "Augenbrauen zupfen/färben",
+      "description": "Formgebung und Färbung der Augenbrauen",
+      "price": 18.00,
+      "duration": 30
+    },
+    {
+      "id": "cosmetic-facial",
+      "category": "Kosmetik",
+      "name": "Gesichtsbehandlung",
+      "description": "Reinigung, Peeling, Maske und Pflege",
+      "price": 55.00,
+      "duration": 60
+    }
+  ],
+  "staff": [
+    {
+      "id": "ufuk",
+      "name": "Ufuk Akcakaya",
+      "position": "Inhaber & Stylist",
+      "specialties": ["woman-haircut", "woman-coloring", "woman-highlights", "man-haircut"]
+    },
+    {
+      "id": "anna",
+      "name": "Anna",
+      "position": "Senior Stylistin",
+      "specialties": ["woman-updo", "woman-coloring", "woman-highlights", "cosmetic-facial"]
+    },
+    {
+      "id": "marie",
+      "name": "Marie",
+      "position": "Stylistin",
+      "specialties": ["kids-haircut-small", "kids-haircut-big", "woman-haircut", "cosmetic-eyebrows"]
+    }
+  ]
+} 
