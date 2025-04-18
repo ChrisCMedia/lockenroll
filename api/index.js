@@ -50,6 +50,10 @@ app.get('/api/debug', (req, res) => {
       platform: process.platform,
       uptime: process.uptime(),
       memoryUsage: process.memoryUsage()
+    },
+    dbStatus: {
+      isConnected: cachedConnection ? true : false,
+      connectionState: cachedClient ? cachedClient.connection.readyState : -1
     }
   });
 });
@@ -73,24 +77,25 @@ app.get('/api/test', (req, res) => {
 // MongoDB-Verbindung herstellen, wenn nicht übersprungen
 const skipMongoDB = process.env.SKIP_MONGODB === 'true';
 
-// Verbindungsoptionen für MongoDB
+// Verbindungsoptionen für MongoDB mit höheren Timeouts
 const options = {
   useNewUrlParser: true,
   useUnifiedTopology: true,
-  connectTimeoutMS: 5000,
-  serverSelectionTimeoutMS: 5000,
-  socketTimeoutMS: 10000,
+  connectTimeoutMS: 30000,           // Erhöht auf 30 Sekunden
+  serverSelectionTimeoutMS: 30000,   // Erhöht auf 30 Sekunden
+  socketTimeoutMS: 45000,            // Erhöht auf 45 Sekunden
+  heartbeatFrequencyMS: 10000,       // Regelmäßige Heartbeats
   family: 4,
   ssl: true,
   authSource: 'admin',
   retryWrites: true,
-  w: 'majority',
-  directConnection: false
+  w: 'majority'
 };
 
 // Globalen MongoDB-Client-Cache erstellen
 let cachedClient = null;
 let cachedConnection = null;
+let isConnecting = false;
 
 // Optimierte MongoDB-Verbindungsfunktion für Serverless
 async function connectToDatabase() {
@@ -98,6 +103,25 @@ async function connectToDatabase() {
     console.log('MongoDB-Verbindung übersprungen (SKIP_MONGODB=true)');
     return null;
   }
+
+  // Wenn bereits eine Verbindung besteht oder gerade aufgebaut wird
+  if (cachedConnection) {
+    console.log('Verwende bestehende MongoDB-Verbindung');
+    return cachedConnection;
+  }
+  
+  if (isConnecting) {
+    console.log('Verbindung wird bereits hergestellt, warte...');
+    // Warte bis zu 5 Sekunden auf bestehenden Verbindungsversuch
+    for (let i = 0; i < 10; i++) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      if (cachedConnection) {
+        return cachedConnection;
+      }
+    }
+  }
+  
+  isConnecting = true;
 
   // Prüfen der MONGODB_URI Umgebungsvariable
   const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/lockenroll';
@@ -111,13 +135,8 @@ async function connectToDatabase() {
   let finalMongoURI = mongoURI;
   if (!mongoURI.startsWith('mongodb://') && !mongoURI.startsWith('mongodb+srv://')) {
     console.log('WARNUNG: MongoDB URI hat falsches Format, verwende hartcodierten Fallback');
-    // Hartcodierter Fallback zur Sicherheit (sollte durch Umgebungsvariable ersetzt werden)
-    finalMongoURI = 'mongodb+srv://admin:admin@cluster0.dkltpao.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0';
-  }
-
-  if (cachedConnection) {
-    console.log('Verwende bestehende MongoDB-Verbindung');
-    return cachedConnection;
+    // Hartcodierter Fallback zur Sicherheit mit korrekter URI und ?-Parametern am Ende
+    finalMongoURI = 'mongodb+srv://admin:admin@cluster0.dkltpao.mongodb.net/lockenroll?retryWrites=true&w=majority&appName=Cluster0';
   }
 
   // Wenn keine Verbindung vorhanden, erstelle eine neue
@@ -146,27 +165,25 @@ async function connectToDatabase() {
       console.log('MongoDB-Verbindung getrennt');
     });
     
-    // Detaillierte Verbindungsdiagnose
-    cachedClient.set('debug', true);
+    // Detaillierte Verbindungsdiagnose für Entwicklung
+    if (process.env.NODE_ENV !== 'production') {
+      cachedClient.set('debug', true);
+    }
   }
 
   try {
     console.log('Versuche, Verbindung zur MongoDB herzustellen (URL-Prefix):', finalMongoURI.substring(0, 15) + '...');
     console.log('Verbindungsoptionen:', JSON.stringify(options));
     
-    // Implementiere Vercel-spezifische Verbindungslogik mit Timeouts
-    cachedConnection = await Promise.race([
-      cachedClient.connect(finalMongoURI, options),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('MongoDB Verbindungstimeout nach 5 Sekunden')), 5000)
-      )
-    ]);
+    // Direkte Verbindung ohne Promise.race
+    cachedConnection = await cachedClient.connect(finalMongoURI, options);
     
     console.log('Neue MongoDB-Verbindung hergestellt');
     
     // Initialen Admin-Benutzer erstellen
     await createInitialAdmin();
     
+    isConnecting = false;
     return cachedConnection;
   } catch (err) {
     console.error('MongoDB-Verbindungsfehler (detailliert):', {
@@ -184,19 +201,43 @@ async function connectToDatabase() {
         cachedConnection = await cachedClient.connect(finalMongoURI, altOptions);
         console.log('Alternative MongoDB-Verbindung hergestellt');
         await createInitialAdmin();
+        isConnecting = false;
         return cachedConnection;
       } catch (altErr) {
         console.error('Alternative Verbindung fehlgeschlagen:', altErr.message);
       }
     }
     
+    // Versuche mit reduzierter URI ohne Parameter zu verbinden
+    try {
+      const simpleURI = finalMongoURI.split('?')[0]; // Entferne alle Parameter
+      console.log('Versuche Verbindung mit vereinfachter URI:', simpleURI.substring(0, 15) + '...');
+      cachedConnection = await cachedClient.connect(simpleURI, options);
+      console.log('MongoDB-Verbindung mit vereinfachter URI hergestellt');
+      await createInitialAdmin();
+      isConnecting = false;
+      return cachedConnection;
+    } catch (simpleErr) {
+      console.error('Verbindung mit vereinfachter URI fehlgeschlagen:', simpleErr.message);
+    }
+    
+    isConnecting = false;
     console.log('Server wird trotzdem gestartet, aber ohne Datenbankverbindung');
     return null;
   }
 }
 
-// Verbindung herstellen wenn die Serverless Function startet
-connectToDatabase();
+// Lazy initialization - connect only when needed
+app.use(async (req, res, next) => {
+  if (!cachedConnection && !skipMongoDB && 
+      (req.path.startsWith('/api/auth') || 
+       req.path.startsWith('/api/appointments') || 
+       req.path.startsWith('/api/config'))) {
+    console.log('Lazy-Loading der MongoDB-Verbindung für Route:', req.path);
+    await connectToDatabase();
+  }
+  next();
+});
 
 // For health check
 app.get('/api/health', async (req, res) => {
@@ -205,6 +246,7 @@ app.get('/api/health', async (req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     database: dbStatus,
+    connectionState: cachedClient ? cachedClient.connection.readyState : -1,
     message: `API ist aktiv. Datenbank ist ${dbStatus}.`
   });
 });
