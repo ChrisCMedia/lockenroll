@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { useAuth } from '../../context/AuthContext';
+// import { useAuth } from '../../context/AuthContext';
 
 function AdminSettings() {
-  const { user } = useAuth();
+  // const { user } = useAuth();
   
   const [settings, setSettings] = useState({
     salonName: 'Lockenroll',

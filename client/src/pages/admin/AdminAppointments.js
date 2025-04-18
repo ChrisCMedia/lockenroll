@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { format, parseISO, isToday, isAfter } from 'date-fns';
+import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { CalendarIcon, ClockIcon, UserIcon, PencilIcon, TrashIcon, CheckIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { ClockIcon, UserIcon, PencilIcon, TrashIcon, CheckIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { appointmentAPI, configAPI } from '../../utils/api';
 
 const AdminAppointments = () => {
   // Zustand
   const [appointments, setAppointments] = useState([]);
-  const [services, setServices] = useState([]);
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -28,7 +27,6 @@ const AdminAppointments = () => {
         
         // Terminplanerconfig laden (für Services und Mitarbeiter)
         const configRes = await configAPI.getConfig();
-        setServices(configRes.data.config.services || []);
         setStaff(configRes.data.config.staff || []);
         
         // Termine für das ausgewählte Datum laden

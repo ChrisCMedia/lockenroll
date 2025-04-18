@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { format, parseISO, isValid, addDays } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { ChevronLeftIcon, ChevronRightIcon, CalendarIcon, UserIcon, ScissorsIcon, ClockIcon } from '@heroicons/react/24/outline';
+import { CalendarIcon, UserIcon, ScissorsIcon, ClockIcon } from '@heroicons/react/24/outline';
 import { configAPI, appointmentAPI } from '../utils/api';
 
 const AppointmentBooking = () => {

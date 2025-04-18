@@ -65,9 +65,11 @@ export const contactAPI = {
   submitContactForm: (formData) => api.post('/contact', formData),
 };
 
-export default {
+const apiServices = {
   auth: authAPI,
   appointment: appointmentAPI,
   config: configAPI,
   contact: contactAPI,
-}; 
+};
+
+export default apiServices; 
