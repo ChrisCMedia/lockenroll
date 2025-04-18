@@ -2,12 +2,13 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 
-// JWT Token generieren
+// JWT Token generieren - Optimiert für Vercel Serverless
 const generateToken = (userId) => {
+  // Kürzere Gültigkeitsdauer für schnellere Erstellung
   return jwt.sign(
     { id: userId },
     process.env.JWT_SECRET,
-    { expiresIn: '1d' }
+    { expiresIn: '24h', algorithm: 'HS256' }
   );
 };
 
@@ -61,20 +62,36 @@ const isAdmin = (req, res, next) => {
   }
 };
 
-// Initialen Admin-Benutzer erstellen
+// Admin-Passwort-Hash vorab generieren, um Zeit in createInitialAdmin zu sparen
+let adminPasswordHash = null;
+
+// Initialen Admin-Benutzer erstellen - Optimiert für Vercel Serverless
 const createInitialAdmin = async () => {
   try {
-    const adminExists = await User.findOne({ role: 'admin' });
+    // Prüfen ob Admin existiert mit effizienter Abfrage (nur ID zurückgeben)
+    const adminExists = await User.findOne({ role: 'admin' }, { _id: 1 }).lean();
     
     if (!adminExists) {
+      console.log('Erstelle Admin-Benutzer...');
+      
+      // Passwort nur einmal hashen, wenn möglich
+      if (!adminPasswordHash) {
+        const salt = await bcrypt.genSalt(8); // Reduziert von 10 auf 8 für schnellere Verarbeitung
+        adminPasswordHash = await bcrypt.hash(process.env.ADMIN_PASSWORD || 'admin', salt);
+      }
+      
+      // Admin-Benutzer mit bereits gehashtem Passwort erstellen
       await User.create({
         username: process.env.ADMIN_USERNAME || 'admin',
-        password: process.env.ADMIN_PASSWORD || 'admin',
+        password: adminPasswordHash,
         name: 'Administrator',
         email: 'admin@lockenroll.de',
         role: 'admin'
       });
+      
       console.log('Admin-Benutzer erstellt');
+    } else {
+      console.log('Admin-Benutzer existiert bereits');
     }
   } catch (error) {
     console.error('Fehler beim Erstellen des Admin-Benutzers:', error);

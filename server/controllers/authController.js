@@ -1,13 +1,16 @@
 const User = require('../models/User');
 const { generateToken } = require('../utils/auth');
 
-// Benutzer-Login
+// Benutzer-Login - Optimiert für Vercel Serverless
 exports.login = async (req, res) => {
   try {
     const { username, password } = req.body;
     
-    // Benutzer suchen
-    const user = await User.findOne({ username });
+    // Performance-Optimierung: Nur benötigte Felder abfragen 
+    const user = await User.findOne(
+      { username }, 
+      { username: 1, password: 1, name: 1, role: 1, email: 1 }
+    );
     
     if (!user) {
       return res.status(401).json({

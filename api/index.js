@@ -48,18 +48,31 @@ const skipMongoDB = process.env.SKIP_MONGODB === 'true';
 const options = {
   useNewUrlParser: true,
   useUnifiedTopology: true,
-  connectTimeoutMS: 60000,
-  serverSelectionTimeoutMS: 60000,
-  maxIdleTimeMS: 10000 // Sync mit Vercel-Plan: 10s für Hobby, 300s für Pro, 900s für Enterprise
+  connectTimeoutMS: 5000, // Reduziert von 60000 auf 5000
+  serverSelectionTimeoutMS: 5000, // Reduziert von 60000 auf 5000
+  socketTimeoutMS: 10000, // Explizite Angabe für Socket-Timeout
+  family: 4 // IPv4 erzwingen für schnellere Auflösung
 };
 
 // Globalen MongoDB-Client-Cache erstellen
 let cachedClient = null;
+let cachedConnection = null;
 
-if (!skipMongoDB) {
+// Optimierte MongoDB-Verbindungsfunktion für Serverless
+async function connectToDatabase() {
+  if (skipMongoDB) {
+    console.log('MongoDB-Verbindung übersprungen (SKIP_MONGODB=true)');
+    return null;
+  }
+
   const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/lockenroll';
-  
-  // MongoDB-Client nur erstellen, wenn er noch nicht existiert
+
+  if (cachedConnection) {
+    console.log('Verwende bestehende MongoDB-Verbindung');
+    return cachedConnection;
+  }
+
+  // Wenn keine Verbindung vorhanden, erstelle eine neue
   if (!cachedClient) {
     cachedClient = new mongoose.Mongoose();
     
@@ -71,22 +84,25 @@ if (!skipMongoDB) {
     cachedClient.connection.on('disconnected', () => {
       console.log('MongoDB-Verbindung getrennt');
     });
-    
-    // Verbindung herstellen
-    cachedClient.connect(mongoURI, options)
-      .then(() => {
-        console.log('MongoDB-Verbindung hergestellt');
-        // Initialen Admin-Benutzer erstellen
-        createInitialAdmin();
-      })
-      .catch(err => {
-        console.error('MongoDB-Verbindungsfehler:', err);
-        console.log('Server wird trotzdem gestartet, aber ohne Datenbankverbindung');
-      });
   }
-} else {
-  console.log('MongoDB-Verbindung übersprungen (SKIP_MONGODB=true)');
+
+  try {
+    cachedConnection = await cachedClient.connect(mongoURI, options);
+    console.log('Neue MongoDB-Verbindung hergestellt');
+    
+    // Initialen Admin-Benutzer erstellen
+    await createInitialAdmin();
+    
+    return cachedConnection;
+  } catch (err) {
+    console.error('MongoDB-Verbindungsfehler:', err);
+    console.log('Server wird trotzdem gestartet, aber ohne Datenbankverbindung');
+    return null;
+  }
 }
+
+// Verbindung herstellen wenn die Serverless Function startet
+connectToDatabase();
 
 // Für Vercel Serverless Functions müssen wir die App exportieren
 module.exports = app; 
