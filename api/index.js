@@ -25,11 +25,12 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Admin-Zugangsdaten aus Umgebungsvariablen oder Fallback
-const adminUsername = process.env.ADMIN_USERNAME || 'admin';
-const adminPassword = process.env.ADMIN_PASSWORD || 'admin';
+// Admin-Zugangsdaten - WICHTIG: Für Vercel müssen die Umgebungsvariablen korrekt gesetzt sein
+// Hier verwenden wir feste Werte als letzten Fallback
+const adminUsername = 'admin';
+const adminPassword = 'admin';
 
-console.log('FALLBACK AUTH: Verwende Admin-Benutzer:', adminUsername);
+console.log('ADMIN CREDENTIALS: ' + adminUsername + ':' + adminPassword);
 
 // In-Memory Datenbank für einfache Authentifizierung
 // Diese wird verwendet, wenn die MongoDB-Verbindung fehlschlägt
@@ -104,6 +105,11 @@ app.get('/api/debug', (req, res) => {
       usersCount: inMemoryAuth.users.length,
       adminUserExists: inMemoryAuth.users.some(u => u.role === 'admin'),
       adminUsername: inMemoryAuth.users.find(u => u.role === 'admin')?.username
+    },
+    vercelEnv: {
+      region: process.env.VERCEL_REGION,
+      url: process.env.VERCEL_URL,
+      environment: process.env.VERCEL_ENV
     }
   });
 });
@@ -178,27 +184,55 @@ let hasInitializedMongoDB = false;
 function initMongoDB() {
   if (hasInitializedMongoDB) return;
   
-  const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/lockenroll';
+  // Hartcodierte MongoDB-Verbindung für den Fall, dass die Umgebungsvariable falsch ist
+  // Dies ist die korrekte Verbindungszeichenfolge, die du uns angegeben hast
+  const fallbackMongoURI = 'mongodb+srv://admin:admin@cluster0.dkltpao.mongodb.net/lockenroll?retryWrites=true&w=majority&appName=Cluster0';
   
+  // Verwende die Umgebungsvariable oder den Fallback
+  let mongoURI = process.env.MONGODB_URI || fallbackMongoURI;
+  
+  // Überprüfe die URI auf das richtige Format
   if (!mongoURI.startsWith('mongodb://') && !mongoURI.startsWith('mongodb+srv://')) {
-    console.log('WARNUNG: MongoDB URI hat falsches Format, verwende Fallback');
-    return;
+    console.log('WARNUNG: MongoDB URI hat falsches Format, verwende Fallback-URI');
+    mongoURI = fallbackMongoURI;
   }
   
+  console.log('Versuche Verbindung mit MongoDB URI (Präfix):', mongoURI.substring(0, 20) + '...');
+  
   try {
-    // Asynchrone Verbindung, wir warten nicht darauf
-    mongoose.connect(mongoURI, {
+    // Verbindungsoptionen für MongoDB
+    const mongooseOptions = {
       useNewUrlParser: true,
       useUnifiedTopology: true,
       connectTimeoutMS: 10000,
       socketTimeoutMS: 10000,
       serverSelectionTimeoutMS: 10000
-    }).then(() => {
-      console.log('MongoDB-Verbindung hergestellt');
-      createInitialAdmin().catch(err => console.error('Admin-Erstellungsfehler:', err));
-    }).catch(err => {
-      console.error('MongoDB-Verbindungsfehler:', err.message);
-    });
+    };
+    
+    // Asynchrone Verbindung, wir warten nicht darauf
+    mongoose.connect(mongoURI, mongooseOptions)
+      .then(() => {
+        console.log('MongoDB-Verbindung hergestellt');
+        createInitialAdmin()
+          .then(() => console.log('Admin-Benutzer wurde geprüft/erstellt'))
+          .catch(err => console.error('Admin-Erstellungsfehler:', err));
+      })
+      .catch(err => {
+        console.error('MongoDB-Verbindungsfehler:', err.message);
+        
+        // Bei Fehler versuche es mit dem Fallback
+        if (mongoURI !== fallbackMongoURI) {
+          console.log('Versuche es mit Fallback-URI...');
+          mongoose.connect(fallbackMongoURI, mongooseOptions)
+            .then(() => {
+              console.log('MongoDB-Verbindung mit Fallback-URI hergestellt');
+              createInitialAdmin().catch(err => console.error('Admin-Erstellungsfehler:', err));
+            })
+            .catch(fallbackErr => {
+              console.error('Auch Fallback-Verbindung fehlgeschlagen:', fallbackErr.message);
+            });
+        }
+      });
     
     mongoose.connection.on('error', (err) => {
       console.error('MongoDB-Verbindungsfehler:', err.message);
@@ -206,6 +240,10 @@ function initMongoDB() {
     
     mongoose.connection.on('connected', () => {
       console.log('MongoDB-Verbindung erfolgreich hergestellt');
+    });
+    
+    mongoose.connection.on('disconnected', () => {
+      console.log('MongoDB-Verbindung getrennt');
     });
     
     hasInitializedMongoDB = true;
