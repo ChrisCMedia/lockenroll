@@ -1,0 +1,21 @@
+{
+  "buildCommand": "cd client && npm install && npm run build",
+  "outputDirectory": "client/build",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/server/server.js" }
+  ],
+  "functions": {
+    "server/server.js": {
+      "memory": 1024,
+      "maxDuration": 10
+    }
+  },
+  "env": {
+    "MONGODB_URI": "MONGODB_URI",
+    "JWT_SECRET": "JWT_SECRET",
+    "ADMIN_USERNAME": "ADMIN_USERNAME",
+    "ADMIN_PASSWORD": "ADMIN_PASSWORD",
+    "NODE_ENV": "production",
+    "SKIP_MONGODB": "false"
+  }
+} 

@@ -46,8 +46,16 @@ app.get('/api/test', (req, res) => {
 });
 
 // MongoDB-Verbindung herstellen, wenn nicht übersprungen
-if (!process.env.SKIP_MONGODB) {
-  mongoose.connect(process.env.MONGODB_URI)
+const skipMongoDB = process.env.SKIP_MONGODB === 'true';
+
+if (!skipMongoDB) {
+  const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/lockenroll';
+  
+  mongoose.connect(mongoURI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    serverSelectionTimeoutMS: 5000 // Timeout nach 5 Sekunden
+  })
     .then(() => {
       console.log('MongoDB-Verbindung hergestellt');
       // Initialen Admin-Benutzer erstellen
@@ -55,7 +63,7 @@ if (!process.env.SKIP_MONGODB) {
     })
     .catch(err => {
       console.error('MongoDB-Verbindungsfehler:', err);
-      process.exit(1);
+      console.log('Server wird trotzdem gestartet, aber ohne Datenbankverbindung');
     });
 } else {
   console.log('MongoDB-Verbindung übersprungen (SKIP_MONGODB=true)');
