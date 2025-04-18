@@ -44,23 +44,46 @@ app.get('/api/test', (req, res) => {
 // MongoDB-Verbindung herstellen, wenn nicht übersprungen
 const skipMongoDB = process.env.SKIP_MONGODB === 'true';
 
+// Verbindungsoptionen für MongoDB
+const options = {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  connectTimeoutMS: 60000,
+  serverSelectionTimeoutMS: 60000,
+  maxIdleTimeMS: 10000 // Sync mit Vercel-Plan: 10s für Hobby, 300s für Pro, 900s für Enterprise
+};
+
+// Globalen MongoDB-Client-Cache erstellen
+let cachedClient = null;
+
 if (!skipMongoDB) {
   const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/lockenroll';
   
-  mongoose.connect(mongoURI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-    serverSelectionTimeoutMS: 5000 // Timeout nach 5 Sekunden
-  })
-    .then(() => {
-      console.log('MongoDB-Verbindung hergestellt');
-      // Initialen Admin-Benutzer erstellen
-      createInitialAdmin();
-    })
-    .catch(err => {
+  // MongoDB-Client nur erstellen, wenn er noch nicht existiert
+  if (!cachedClient) {
+    cachedClient = new mongoose.Mongoose();
+    
+    // Event-Listeners für Verbindungsprobleme
+    cachedClient.connection.on('error', (err) => {
       console.error('MongoDB-Verbindungsfehler:', err);
-      console.log('Server wird trotzdem gestartet, aber ohne Datenbankverbindung');
     });
+    
+    cachedClient.connection.on('disconnected', () => {
+      console.log('MongoDB-Verbindung getrennt');
+    });
+    
+    // Verbindung herstellen
+    cachedClient.connect(mongoURI, options)
+      .then(() => {
+        console.log('MongoDB-Verbindung hergestellt');
+        // Initialen Admin-Benutzer erstellen
+        createInitialAdmin();
+      })
+      .catch(err => {
+        console.error('MongoDB-Verbindungsfehler:', err);
+        console.log('Server wird trotzdem gestartet, aber ohne Datenbankverbindung');
+      });
+  }
 } else {
   console.log('MongoDB-Verbindung übersprungen (SKIP_MONGODB=true)');
 }
