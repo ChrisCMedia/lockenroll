@@ -44,6 +44,12 @@ app.get('/api/debug', (req, res) => {
       jwtSecretLength: process.env.JWT_SECRET ? process.env.JWT_SECRET.length : 0,
       adminUsernameSet: Boolean(process.env.ADMIN_USERNAME),
       adminPasswordSet: Boolean(process.env.ADMIN_PASSWORD)
+    },
+    serverInfo: {
+      nodeVersion: process.version,
+      platform: process.platform,
+      uptime: process.uptime(),
+      memoryUsage: process.memoryUsage()
     }
   });
 });
@@ -74,7 +80,12 @@ const options = {
   connectTimeoutMS: 5000,
   serverSelectionTimeoutMS: 5000,
   socketTimeoutMS: 10000,
-  family: 4
+  family: 4,
+  ssl: true,
+  authSource: 'admin',
+  retryWrites: true,
+  w: 'majority',
+  directConnection: false
 };
 
 // Globalen MongoDB-Client-Cache erstellen
@@ -116,15 +127,41 @@ async function connectToDatabase() {
     // Event-Listeners für Verbindungsprobleme
     cachedClient.connection.on('error', (err) => {
       console.error('MongoDB-Verbindungsfehler:', err);
+      // Detail-Infos für Netzwerk- und Authentifizierungsfehler
+      if (err.name === 'MongoNetworkError') {
+        console.error('Netzwerkfehler:', {
+          code: err.code,
+          syscall: err.syscall,
+          address: err.address,
+          port: err.port
+        });
+      }
+    });
+    
+    cachedClient.connection.on('connected', () => {
+      console.log('MongoDB-Verbindung erfolgreich hergestellt');
     });
     
     cachedClient.connection.on('disconnected', () => {
       console.log('MongoDB-Verbindung getrennt');
     });
+    
+    // Detaillierte Verbindungsdiagnose
+    cachedClient.set('debug', true);
   }
 
   try {
-    cachedConnection = await cachedClient.connect(finalMongoURI, options);
+    console.log('Versuche, Verbindung zur MongoDB herzustellen (URL-Prefix):', finalMongoURI.substring(0, 15) + '...');
+    console.log('Verbindungsoptionen:', JSON.stringify(options));
+    
+    // Implementiere Vercel-spezifische Verbindungslogik mit Timeouts
+    cachedConnection = await Promise.race([
+      cachedClient.connect(finalMongoURI, options),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('MongoDB Verbindungstimeout nach 5 Sekunden')), 5000)
+      )
+    ]);
+    
     console.log('Neue MongoDB-Verbindung hergestellt');
     
     // Initialen Admin-Benutzer erstellen
@@ -132,7 +169,27 @@ async function connectToDatabase() {
     
     return cachedConnection;
   } catch (err) {
-    console.error('MongoDB-Verbindungsfehler:', err);
+    console.error('MongoDB-Verbindungsfehler (detailliert):', {
+      name: err.name,
+      message: err.message,
+      code: err.code,
+      stack: err.stack.split('\n').slice(0, 3).join('\n')
+    });
+    
+    // Versuche alternative Verbindung ohne SSL, falls SSL-Fehler
+    if (err.message && err.message.includes('SSL')) {
+      try {
+        console.log('Versuche alternative Verbindung ohne SSL...');
+        const altOptions = { ...options, ssl: false };
+        cachedConnection = await cachedClient.connect(finalMongoURI, altOptions);
+        console.log('Alternative MongoDB-Verbindung hergestellt');
+        await createInitialAdmin();
+        return cachedConnection;
+      } catch (altErr) {
+        console.error('Alternative Verbindung fehlgeschlagen:', altErr.message);
+      }
+    }
+    
     console.log('Server wird trotzdem gestartet, aber ohne Datenbankverbindung');
     return null;
   }
@@ -140,6 +197,17 @@ async function connectToDatabase() {
 
 // Verbindung herstellen wenn die Serverless Function startet
 connectToDatabase();
+
+// For health check
+app.get('/api/health', async (req, res) => {
+  const dbStatus = cachedConnection ? 'connected' : 'disconnected';
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    database: dbStatus,
+    message: `API ist aktiv. Datenbank ist ${dbStatus}.`
+  });
+});
 
 // Für Vercel Serverless Functions müssen wir die App exportieren
 module.exports = app; 
