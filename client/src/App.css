@@ -1,0 +1,14 @@
+/* App.css - Globale Stile für die Anwendung */
+
+/* Da wir TailwindCSS verwenden, enthält diese Datei nur minimale Stile,
+   die nicht einfach mit Tailwind abgedeckt werden können */
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Zusätzliche benutzerdefinierte Stile können hier hinzugefügt werden */ 
