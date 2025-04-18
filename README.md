@@ -2,7 +2,7 @@
 
 Dieses Projekt ist eine moderne, responsive Webseite für den Friseursalon "Locken'Roll", die ein Terminbuchungssystem als Hauptfunktion bietet.
 
-## Technologien
+## Technologienn
 
 - **Frontend**: React, React Router, Tailwind CSS, Axios
 - **Backend**: Node.js, Express, MongoDB
