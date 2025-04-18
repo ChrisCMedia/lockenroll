@@ -7,7 +7,7 @@ const generateToken = (userId) => {
   // Kürzere Gültigkeitsdauer für schnellere Erstellung
   return jwt.sign(
     { id: userId },
-    process.env.JWT_SECRET,
+    process.env.JWT_SECRET || 'lockenroll_secure_jwt_secret_2023',
     { expiresIn: '24h', algorithm: 'HS256' }
   );
 };
@@ -26,10 +26,24 @@ const authenticate = async (req, res, next) => {
     }
     
     // Token überprüfen
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'lockenroll_secure_jwt_secret_2023');
     
-    // Benutzer finden
-    const user = await User.findById(decoded.id);
+    // MongoDB-Verbindung prüfen
+    const isMongoConnected = User.db && User.db.readyState === 1;
+    
+    // Benutzer finden - Entweder über MongoDB oder Fallback
+    let user = null;
+    
+    if (isMongoConnected) {
+      // Normaler Pfad - MongoDB Verbindung ist aktiv
+      user = await User.findById(decoded.id);
+    } else if (global.fallbackAuth) {
+      // Fallback für direkten Zugriff ohne MongoDB
+      const fallbackUser = global.fallbackAuth.inMemoryAuth.users.find(u => u._id === decoded.id);
+      if (fallbackUser) {
+        user = { ...fallbackUser }; // Kopieren, um Modifikationen zu vermeiden
+      }
+    }
     
     if (!user) {
       return res.status(401).json({
@@ -68,6 +82,12 @@ let adminPasswordHash = null;
 // Initialen Admin-Benutzer erstellen - Optimiert für Vercel Serverless
 const createInitialAdmin = async () => {
   try {
+    // Prüfen ob MongoDB verbunden ist
+    if (!User.db || User.db.readyState !== 1) {
+      console.log('Überspringe Admin-Erstellung: Keine MongoDB-Verbindung');
+      return;
+    }
+    
     // Prüfen ob Admin existiert mit effizienter Abfrage (nur ID zurückgeben)
     const adminExists = await User.findOne({ role: 'admin' }, { _id: 1 }).lean();
     

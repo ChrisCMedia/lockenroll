@@ -25,6 +25,29 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// In-Memory Datenbank für einfache Authentifizierung
+// Diese wird verwendet, wenn die MongoDB-Verbindung fehlschlägt
+const inMemoryAuth = {
+  users: [
+    {
+      _id: 'admin-id-123456',
+      username: process.env.ADMIN_USERNAME || 'admin',
+      // Das Passwort sollte eigentlich gehasht sein, aber für den Notfall verwenden wir es direkt
+      password: process.env.ADMIN_PASSWORD || 'admin',
+      name: 'Administrator',
+      email: 'admin@lockenroll.de',
+      role: 'admin'
+    }
+  ],
+  comparePassword: (username, password) => {
+    const user = inMemoryAuth.users.find(u => u.username === username);
+    return user && user.password === password;
+  },
+  findUserByUsername: (username) => {
+    return inMemoryAuth.users.find(u => u.username === username);
+  }
+};
+
 // Debug-Route, um Umgebungsvariablen zu prüfen
 app.get('/api/debug', (req, res) => {
   // Umgebungsvariablen maskieren für Sicherheit
@@ -52,8 +75,9 @@ app.get('/api/debug', (req, res) => {
       memoryUsage: process.memoryUsage()
     },
     dbStatus: {
-      isConnected: cachedConnection ? true : false,
-      connectionState: cachedClient ? cachedClient.connection.readyState : -1
+      isConnected: mongoose.connection && mongoose.connection.readyState === 1,
+      connectionState: mongoose.connection ? mongoose.connection.readyState : -1,
+      usingFallback: !mongoose.connection || mongoose.connection.readyState !== 1
     }
   });
 });
@@ -63,6 +87,51 @@ app.use('/api/auth', authRoutes);
 app.use('/api/appointments', appointmentRoutes);
 app.use('/api/config', configRoutes);
 app.use('/api/contact', contactRoutes);
+
+// Debug: Direkter Login-Endpunkt für Tests ohne MongoDB
+app.post('/api/direct-login', (req, res) => {
+  try {
+    const { username, password } = req.body;
+    
+    // In-Memory Authentifizierung
+    if (inMemoryAuth.comparePassword(username, password)) {
+      const user = inMemoryAuth.findUserByUsername(username);
+      
+      // Verwende das JWT-Secret aus der Umgebungsvariable
+      const jwt = require('jsonwebtoken');
+      const token = jwt.sign(
+        { id: user._id },
+        process.env.JWT_SECRET || 'lockenroll_secure_jwt_secret_2023',
+        { expiresIn: '24h' }
+      );
+      
+      return res.json({
+        success: true,
+        message: 'Anmeldung erfolgreich (Notfall-Modus)',
+        token,
+        user: {
+          id: user._id,
+          username: user.username,
+          name: user.name,
+          role: user.role,
+          email: user.email
+        }
+      });
+    }
+    
+    return res.status(401).json({
+      success: false,
+      message: 'Benutzername oder Passwort ist falsch'
+    });
+  } catch (error) {
+    console.error('Direkter Login-Fehler:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Serverfehler bei der Anmeldung',
+      error: error.message
+    });
+  }
+});
 
 // Demo-Route zum Testen
 app.get('/api/test', (req, res) => {
@@ -74,179 +143,67 @@ app.get('/api/test', (req, res) => {
   });
 });
 
-// MongoDB-Verbindung herstellen, wenn nicht übersprungen
-const skipMongoDB = process.env.SKIP_MONGODB === 'true';
+// MongoDB-Verbindung nur initialisieren, wenn wir nicht in Vercel Edge Runtime sind
+let hasInitializedMongoDB = false;
 
-// Verbindungsoptionen für MongoDB mit höheren Timeouts
-const options = {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  connectTimeoutMS: 30000,           // Erhöht auf 30 Sekunden
-  serverSelectionTimeoutMS: 30000,   // Erhöht auf 30 Sekunden
-  socketTimeoutMS: 45000,            // Erhöht auf 45 Sekunden
-  heartbeatFrequencyMS: 10000,       // Regelmäßige Heartbeats
-  family: 4,
-  ssl: true,
-  authSource: 'admin',
-  retryWrites: true,
-  w: 'majority'
-};
-
-// Globalen MongoDB-Client-Cache erstellen
-let cachedClient = null;
-let cachedConnection = null;
-let isConnecting = false;
-
-// Optimierte MongoDB-Verbindungsfunktion für Serverless
-async function connectToDatabase() {
-  if (skipMongoDB) {
-    console.log('MongoDB-Verbindung übersprungen (SKIP_MONGODB=true)');
-    return null;
-  }
-
-  // Wenn bereits eine Verbindung besteht oder gerade aufgebaut wird
-  if (cachedConnection) {
-    console.log('Verwende bestehende MongoDB-Verbindung');
-    return cachedConnection;
-  }
+// Einfache MongoDB-Verbindung für den Start
+function initMongoDB() {
+  if (hasInitializedMongoDB) return;
   
-  if (isConnecting) {
-    console.log('Verbindung wird bereits hergestellt, warte...');
-    // Warte bis zu 5 Sekunden auf bestehenden Verbindungsversuch
-    for (let i = 0; i < 10; i++) {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      if (cachedConnection) {
-        return cachedConnection;
-      }
-    }
-  }
-  
-  isConnecting = true;
-
-  // Prüfen der MONGODB_URI Umgebungsvariable
   const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/lockenroll';
   
-  // Debugging für die mongoURI
-  console.log('MongoDB URI Präfix:', mongoURI.substring(0, 10) + '...');
-  console.log('MongoDB URI gültiges Format:', 
-    mongoURI.startsWith('mongodb://') || mongoURI.startsWith('mongodb+srv://'));
-  
-  // Manueller Fallback, wenn die Umgebungsvariable nicht im richtigen Format ist
-  let finalMongoURI = mongoURI;
   if (!mongoURI.startsWith('mongodb://') && !mongoURI.startsWith('mongodb+srv://')) {
-    console.log('WARNUNG: MongoDB URI hat falsches Format, verwende hartcodierten Fallback');
-    // Hartcodierter Fallback zur Sicherheit mit korrekter URI und ?-Parametern am Ende
-    finalMongoURI = 'mongodb+srv://admin:admin@cluster0.dkltpao.mongodb.net/lockenroll?retryWrites=true&w=majority&appName=Cluster0';
+    console.log('WARNUNG: MongoDB URI hat falsches Format, verwende Fallback');
+    return;
   }
-
-  // Wenn keine Verbindung vorhanden, erstelle eine neue
-  if (!cachedClient) {
-    cachedClient = new mongoose.Mongoose();
-    
-    // Event-Listeners für Verbindungsprobleme
-    cachedClient.connection.on('error', (err) => {
-      console.error('MongoDB-Verbindungsfehler:', err);
-      // Detail-Infos für Netzwerk- und Authentifizierungsfehler
-      if (err.name === 'MongoNetworkError') {
-        console.error('Netzwerkfehler:', {
-          code: err.code,
-          syscall: err.syscall,
-          address: err.address,
-          port: err.port
-        });
-      }
+  
+  try {
+    // Asynchrone Verbindung, wir warten nicht darauf
+    mongoose.connect(mongoURI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      connectTimeoutMS: 10000,
+      socketTimeoutMS: 10000,
+      serverSelectionTimeoutMS: 10000
+    }).then(() => {
+      console.log('MongoDB-Verbindung hergestellt');
+      createInitialAdmin().catch(err => console.error('Admin-Erstellungsfehler:', err));
+    }).catch(err => {
+      console.error('MongoDB-Verbindungsfehler:', err.message);
     });
     
-    cachedClient.connection.on('connected', () => {
+    mongoose.connection.on('error', (err) => {
+      console.error('MongoDB-Verbindungsfehler:', err.message);
+    });
+    
+    mongoose.connection.on('connected', () => {
       console.log('MongoDB-Verbindung erfolgreich hergestellt');
     });
     
-    cachedClient.connection.on('disconnected', () => {
-      console.log('MongoDB-Verbindung getrennt');
-    });
-    
-    // Detaillierte Verbindungsdiagnose für Entwicklung
-    if (process.env.NODE_ENV !== 'production') {
-      cachedClient.set('debug', true);
-    }
-  }
-
-  try {
-    console.log('Versuche, Verbindung zur MongoDB herzustellen (URL-Prefix):', finalMongoURI.substring(0, 15) + '...');
-    console.log('Verbindungsoptionen:', JSON.stringify(options));
-    
-    // Direkte Verbindung ohne Promise.race
-    cachedConnection = await cachedClient.connect(finalMongoURI, options);
-    
-    console.log('Neue MongoDB-Verbindung hergestellt');
-    
-    // Initialen Admin-Benutzer erstellen
-    await createInitialAdmin();
-    
-    isConnecting = false;
-    return cachedConnection;
+    hasInitializedMongoDB = true;
   } catch (err) {
-    console.error('MongoDB-Verbindungsfehler (detailliert):', {
-      name: err.name,
-      message: err.message,
-      code: err.code,
-      stack: err.stack.split('\n').slice(0, 3).join('\n')
-    });
-    
-    // Versuche alternative Verbindung ohne SSL, falls SSL-Fehler
-    if (err.message && err.message.includes('SSL')) {
-      try {
-        console.log('Versuche alternative Verbindung ohne SSL...');
-        const altOptions = { ...options, ssl: false };
-        cachedConnection = await cachedClient.connect(finalMongoURI, altOptions);
-        console.log('Alternative MongoDB-Verbindung hergestellt');
-        await createInitialAdmin();
-        isConnecting = false;
-        return cachedConnection;
-      } catch (altErr) {
-        console.error('Alternative Verbindung fehlgeschlagen:', altErr.message);
-      }
-    }
-    
-    // Versuche mit reduzierter URI ohne Parameter zu verbinden
-    try {
-      const simpleURI = finalMongoURI.split('?')[0]; // Entferne alle Parameter
-      console.log('Versuche Verbindung mit vereinfachter URI:', simpleURI.substring(0, 15) + '...');
-      cachedConnection = await cachedClient.connect(simpleURI, options);
-      console.log('MongoDB-Verbindung mit vereinfachter URI hergestellt');
-      await createInitialAdmin();
-      isConnecting = false;
-      return cachedConnection;
-    } catch (simpleErr) {
-      console.error('Verbindung mit vereinfachter URI fehlgeschlagen:', simpleErr.message);
-    }
-    
-    isConnecting = false;
-    console.log('Server wird trotzdem gestartet, aber ohne Datenbankverbindung');
-    return null;
+    console.error('MongoDB-Initialisierungsfehler:', err.message);
   }
 }
 
-// Lazy initialization - connect only when needed
-app.use(async (req, res, next) => {
-  if (!cachedConnection && !skipMongoDB && 
-      (req.path.startsWith('/api/auth') || 
-       req.path.startsWith('/api/appointments') || 
-       req.path.startsWith('/api/config'))) {
-    console.log('Lazy-Loading der MongoDB-Verbindung für Route:', req.path);
-    await connectToDatabase();
-  }
-  next();
-});
+// Fallback-Authentifizierungsmiddleware für auth.js
+// Mach dies global verfügbar, damit auth.js darauf zugreifen kann
+global.fallbackAuth = {
+  inMemoryAuth
+};
+
+// Initialisiere MongoDB, ohne auf die Verbindung zu warten
+initMongoDB();
 
 // For health check
-app.get('/api/health', async (req, res) => {
-  const dbStatus = cachedConnection ? 'connected' : 'disconnected';
+app.get('/api/health', (req, res) => {
+  const dbStatus = mongoose.connection && mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     database: dbStatus,
-    connectionState: cachedClient ? cachedClient.connection.readyState : -1,
+    connectionState: mongoose.connection ? mongoose.connection.readyState : -1,
+    usingFallback: dbStatus !== 'connected',
     message: `API ist aktiv. Datenbank ist ${dbStatus}.`
   });
 });

@@ -1,28 +1,50 @@
 const User = require('../models/User');
 const { generateToken } = require('../utils/auth');
 
-// Benutzer-Login - Optimiert für Vercel Serverless
+// Benutzer-Login - Optimiert für Vercel Serverless mit Fallback
 exports.login = async (req, res) => {
   try {
     const { username, password } = req.body;
     
-    // Performance-Optimierung: Nur benötigte Felder abfragen 
-    const user = await User.findOne(
-      { username }, 
-      { username: 1, password: 1, name: 1, role: 1, email: 1 }
-    );
+    // Überprüfen, ob MongoDB verbunden ist
+    const isMongoConnected = User.db && User.db.readyState === 1;
     
-    if (!user) {
-      return res.status(401).json({
+    let user = null;
+    let isMatch = false;
+    
+    if (isMongoConnected) {
+      // MongoDB ist verfügbar - normale Anmeldung
+      console.log('Login: Verwende MongoDB-Authentifizierung');
+      
+      // Performance-Optimierung: Nur benötigte Felder abfragen 
+      user = await User.findOne(
+        { username }, 
+        { username: 1, password: 1, name: 1, role: 1, email: 1 }
+      );
+      
+      if (user) {
+        // Passwort prüfen
+        isMatch = await user.comparePassword(password);
+      }
+    } else if (global.fallbackAuth && global.fallbackAuth.inMemoryAuth) {
+      // Fallback auf In-Memory-Authentifizierung
+      console.log('Login: Verwende Fallback-Authentifizierung (keine MongoDB-Verbindung)');
+      
+      const fallbackUser = global.fallbackAuth.inMemoryAuth.findUserByUsername(username);
+      if (fallbackUser) {
+        user = fallbackUser;
+        isMatch = global.fallbackAuth.inMemoryAuth.comparePassword(username, password);
+      }
+    } else {
+      // Keine Authentifizierungsmöglichkeit
+      console.error('Login: Keine Authentifizierungsmethode verfügbar');
+      return res.status(500).json({
         success: false,
-        message: 'Benutzername oder Passwort ist falsch'
+        message: 'Serverfehler bei der Anmeldung: Keine Authentifizierungsmethode verfügbar'
       });
     }
     
-    // Passwort prüfen
-    const isMatch = await user.comparePassword(password);
-    
-    if (!isMatch) {
+    if (!user || !isMatch) {
       return res.status(401).json({
         success: false,
         message: 'Benutzername oder Passwort ist falsch'
@@ -35,7 +57,7 @@ exports.login = async (req, res) => {
     // Erfolgreiche Anmeldung
     res.json({
       success: true,
-      message: 'Anmeldung erfolgreich',
+      message: isMongoConnected ? 'Anmeldung erfolgreich' : 'Anmeldung erfolgreich (Fallback-Modus)',
       token,
       user: {
         id: user._id,
@@ -58,6 +80,14 @@ exports.login = async (req, res) => {
 // Benutzer registrieren (nur für Admin)
 exports.register = async (req, res) => {
   try {
+    // Überprüfen, ob MongoDB verbunden ist
+    if (!User.db || User.db.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        message: 'Funktion nicht verfügbar: Keine Datenbankverbindung'
+      });
+    }
+    
     const { username, password, name, email, role } = req.body;
     
     // Prüfen, ob Benutzer bereits existiert
@@ -107,14 +137,8 @@ exports.register = async (req, res) => {
 // Aktuellen Benutzer abrufen
 exports.getCurrentUser = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select('-password');
-    
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'Benutzer nicht gefunden'
-      });
-    }
+    // User ist bereits in req.user durch die authenticate-Middleware
+    const user = req.user;
     
     res.json({
       success: true,
