@@ -25,26 +25,44 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Admin-Zugangsdaten aus Umgebungsvariablen oder Fallback
+const adminUsername = process.env.ADMIN_USERNAME || 'admin';
+const adminPassword = process.env.ADMIN_PASSWORD || 'admin';
+
+console.log('FALLBACK AUTH: Verwende Admin-Benutzer:', adminUsername);
+
 // In-Memory Datenbank für einfache Authentifizierung
 // Diese wird verwendet, wenn die MongoDB-Verbindung fehlschlägt
 const inMemoryAuth = {
   users: [
     {
       _id: 'admin-id-123456',
-      username: process.env.ADMIN_USERNAME || 'admin',
+      username: adminUsername,
       // Das Passwort sollte eigentlich gehasht sein, aber für den Notfall verwenden wir es direkt
-      password: process.env.ADMIN_PASSWORD || 'admin',
+      password: adminPassword,
       name: 'Administrator',
       email: 'admin@lockenroll.de',
       role: 'admin'
     }
   ],
   comparePassword: (username, password) => {
+    console.log(`FALLBACK AUTH: Vergleiche ${username}:${password} mit in-memory Daten`);
     const user = inMemoryAuth.users.find(u => u.username === username);
-    return user && user.password === password;
+    
+    if (!user) {
+      console.log(`FALLBACK AUTH: Benutzer ${username} nicht gefunden`);
+      return false;
+    }
+    
+    const isMatch = user.password === password;
+    console.log(`FALLBACK AUTH: Passwort für ${username} ist ${isMatch ? 'korrekt' : 'falsch'}`);
+    return isMatch;
   },
   findUserByUsername: (username) => {
-    return inMemoryAuth.users.find(u => u.username === username);
+    console.log(`FALLBACK AUTH: Suche Benutzer ${username}`);
+    const user = inMemoryAuth.users.find(u => u.username === username);
+    console.log(`FALLBACK AUTH: Benutzer ${username} ${user ? 'gefunden' : 'nicht gefunden'}`);
+    return user;
   }
 };
 
@@ -66,7 +84,9 @@ app.get('/api/debug', (req, res) => {
       ) : false,
       jwtSecretLength: process.env.JWT_SECRET ? process.env.JWT_SECRET.length : 0,
       adminUsernameSet: Boolean(process.env.ADMIN_USERNAME),
-      adminPasswordSet: Boolean(process.env.ADMIN_PASSWORD)
+      adminPasswordSet: Boolean(process.env.ADMIN_PASSWORD),
+      adminUsername: adminUsername, // OK für Debug anzeigen
+      adminPasswordMasked: adminPassword ? '*'.repeat(adminPassword.length) : 'nicht definiert'
     },
     serverInfo: {
       nodeVersion: process.version,
@@ -78,6 +98,12 @@ app.get('/api/debug', (req, res) => {
       isConnected: mongoose.connection && mongoose.connection.readyState === 1,
       connectionState: mongoose.connection ? mongoose.connection.readyState : -1,
       usingFallback: !mongoose.connection || mongoose.connection.readyState !== 1
+    },
+    fallbackAuth: {
+      enabled: true,
+      usersCount: inMemoryAuth.users.length,
+      adminUserExists: inMemoryAuth.users.some(u => u.role === 'admin'),
+      adminUsername: inMemoryAuth.users.find(u => u.role === 'admin')?.username
     }
   });
 });
@@ -92,6 +118,8 @@ app.use('/api/contact', contactRoutes);
 app.post('/api/direct-login', (req, res) => {
   try {
     const { username, password } = req.body;
+    
+    console.log(`DIRECT LOGIN: Versuch für ${username}`);
     
     // In-Memory Authentifizierung
     if (inMemoryAuth.comparePassword(username, password)) {
