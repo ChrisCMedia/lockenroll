@@ -25,6 +25,29 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Debug-Route, um Umgebungsvariablen zu prüfen
+app.get('/api/debug', (req, res) => {
+  // Umgebungsvariablen maskieren für Sicherheit
+  const maskedMongoURI = process.env.MONGODB_URI 
+    ? process.env.MONGODB_URI.replace(/\/\/([^:]+):([^@]+)@/, '//***:***@') 
+    : 'nicht definiert';
+  
+  res.json({
+    success: true,
+    env: {
+      nodeEnv: process.env.NODE_ENV,
+      mongoURIPrefix: process.env.MONGODB_URI ? process.env.MONGODB_URI.substring(0, 10) + '...' : 'nicht definiert',
+      mongoURIValid: process.env.MONGODB_URI ? (
+        process.env.MONGODB_URI.startsWith('mongodb://') || 
+        process.env.MONGODB_URI.startsWith('mongodb+srv://')
+      ) : false,
+      jwtSecretLength: process.env.JWT_SECRET ? process.env.JWT_SECRET.length : 0,
+      adminUsernameSet: Boolean(process.env.ADMIN_USERNAME),
+      adminPasswordSet: Boolean(process.env.ADMIN_PASSWORD)
+    }
+  });
+});
+
 // API-Routen
 app.use('/api/auth', authRoutes);
 app.use('/api/appointments', appointmentRoutes);
@@ -48,10 +71,10 @@ const skipMongoDB = process.env.SKIP_MONGODB === 'true';
 const options = {
   useNewUrlParser: true,
   useUnifiedTopology: true,
-  connectTimeoutMS: 5000, // Reduziert von 60000 auf 5000
-  serverSelectionTimeoutMS: 5000, // Reduziert von 60000 auf 5000
-  socketTimeoutMS: 10000, // Explizite Angabe für Socket-Timeout
-  family: 4 // IPv4 erzwingen für schnellere Auflösung
+  connectTimeoutMS: 5000,
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 10000,
+  family: 4
 };
 
 // Globalen MongoDB-Client-Cache erstellen
@@ -65,7 +88,21 @@ async function connectToDatabase() {
     return null;
   }
 
+  // Prüfen der MONGODB_URI Umgebungsvariable
   const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/lockenroll';
+  
+  // Debugging für die mongoURI
+  console.log('MongoDB URI Präfix:', mongoURI.substring(0, 10) + '...');
+  console.log('MongoDB URI gültiges Format:', 
+    mongoURI.startsWith('mongodb://') || mongoURI.startsWith('mongodb+srv://'));
+  
+  // Manueller Fallback, wenn die Umgebungsvariable nicht im richtigen Format ist
+  let finalMongoURI = mongoURI;
+  if (!mongoURI.startsWith('mongodb://') && !mongoURI.startsWith('mongodb+srv://')) {
+    console.log('WARNUNG: MongoDB URI hat falsches Format, verwende hartcodierten Fallback');
+    // Hartcodierter Fallback zur Sicherheit (sollte durch Umgebungsvariable ersetzt werden)
+    finalMongoURI = 'mongodb+srv://admin:admin@cluster0.dkltpao.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0';
+  }
 
   if (cachedConnection) {
     console.log('Verwende bestehende MongoDB-Verbindung');
@@ -87,7 +124,7 @@ async function connectToDatabase() {
   }
 
   try {
-    cachedConnection = await cachedClient.connect(mongoURI, options);
+    cachedConnection = await cachedClient.connect(finalMongoURI, options);
     console.log('Neue MongoDB-Verbindung hergestellt');
     
     // Initialen Admin-Benutzer erstellen
